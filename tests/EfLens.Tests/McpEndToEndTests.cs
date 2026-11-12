@@ -16,7 +16,9 @@ public sealed class McpEndToEndTests : IAsyncLifetime
     private IHost _host = null!;
     private McpClient _client = null!;
 
-    public async Task InitializeAsync()
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    public async ValueTask InitializeAsync()
     {
         var builder = Host.CreateEmptyApplicationBuilder(settings: null);
         builder.Services.AddEfLens(new EfLensOptions { Provider = "sqlite", ConnectionString = _db.ConnectionString });
@@ -32,7 +34,7 @@ public sealed class McpEndToEndTests : IAsyncLifetime
             new StreamClientTransport(_clientToServer.Writer.AsStream(), _serverToClient.Reader.AsStream(), loggerFactory: null));
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _client.DisposeAsync();
         await _host.StopAsync();
@@ -41,26 +43,59 @@ public sealed class McpEndToEndTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Server_advertises_list_tables_as_a_read_only_tool()
+    public async Task Server_advertises_every_tool_as_read_only()
     {
-        var tools = await _client.ListToolsAsync();
+        var tools = await _client.ListToolsAsync(cancellationToken: Ct);
 
-        var tool = Assert.Single(tools, t => t.Name == "list_tables");
-        Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint);
-        Assert.False(tool.ProtocolTool.Annotations?.DestructiveHint);
+        Assert.Equal(["describe_table", "list_relations", "list_tables"], tools.Select(t => t.Name).Order());
+        Assert.All(tools, tool =>
+        {
+            Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint);
+            Assert.False(tool.ProtocolTool.Annotations?.DestructiveHint);
+        });
     }
 
     [Fact]
     public async Task Calling_list_tables_returns_the_schema_as_json()
     {
-        var result = await _client.CallToolAsync("list_tables");
-
-        Assert.NotEqual(true, result.IsError);
-        var text = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
-        var names = JsonDocument.Parse(text).RootElement.EnumerateArray()
+        var names = (await CallAsync("list_tables")).EnumerateArray()
             .Select(t => t.GetProperty("name").GetString()!)
             .ToArray();
-        Assert.Equal(["Customers", "Orders", "CustomerTotals"], names);
+
+        Assert.Equal(["Customers", "OrderLines", "Orders", "CustomerTotals"], names);
+    }
+
+    [Fact]
+    public async Task Calling_describe_table_returns_columns_and_indexes()
+    {
+        var orders = await CallAsync("describe_table", new() { ["table"] = "Orders" });
+
+        Assert.Equal(["Id", "CustomerId", "Total"],
+            orders.GetProperty("columns").EnumerateArray().Select(c => c.GetProperty("name").GetString()!));
+        Assert.Equal("IX_Orders_CustomerId",
+            Assert.Single(orders.GetProperty("indexes").EnumerateArray()).GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task Calling_list_relations_with_a_table_filters_the_foreign_keys()
+    {
+        var relations = await CallAsync("list_relations", new() { ["table"] = "Customers" });
+
+        var fk = Assert.Single(relations.EnumerateArray());
+        Assert.Equal("Orders", fk.GetProperty("fromTable").GetString());
+        Assert.Equal("CASCADE", fk.GetProperty("onDelete").GetString());
+    }
+
+    [Fact]
+    public async Task Unknown_table_comes_back_as_a_tool_error_the_agent_can_act_on()
+    {
+        var result = await _client.CallToolAsync("describe_table",
+            new Dictionary<string, object?> { ["table"] = "Invoices" }, cancellationToken: Ct);
+
+        Assert.True(result.IsError);
+        var message = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
+        Assert.Contains("Invoices", message);
+        Assert.Contains("list_tables", message);
     }
 
     [Fact]
@@ -70,5 +105,14 @@ public sealed class McpEndToEndTests : IAsyncLifetime
         var ex = Assert.Throws<NotSupportedException>(() =>
             services.AddEfLens(new EfLensOptions { Provider = "oracle", ConnectionString = "x" }));
         Assert.Contains("oracle", ex.Message);
+    }
+
+    private async Task<JsonElement> CallAsync(string tool, Dictionary<string, object?>? arguments = null)
+    {
+        var result = await _client.CallToolAsync(tool, arguments, cancellationToken: Ct);
+
+        Assert.NotEqual(true, result.IsError);
+        var text = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
+        return JsonDocument.Parse(text).RootElement;
     }
 }

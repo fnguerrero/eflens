@@ -12,8 +12,9 @@ public static class EfLensServiceCollectionExtensions
         ISchemaProvider provider = options.Provider.Trim().ToLowerInvariant() switch
         {
             "sqlite" => new SqliteSchemaProvider(options.ConnectionString),
+            "sqlserver" or "mssql" => new SqlServerSchemaProvider(options.ConnectionString),
             var other => throw new NotSupportedException(
-                $"Provider '{other}' is not supported yet. Supported providers: sqlite."),
+                $"Provider '{other}' is not supported yet. Supported providers: sqlite, sqlserver."),
         };
 
         services.AddSingleton(options);

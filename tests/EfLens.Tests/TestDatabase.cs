@@ -15,9 +15,21 @@ public sealed class TestDatabase : IDisposable
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            CREATE TABLE Customers (Id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT NOT NULL);
-            CREATE TABLE Orders (Id INTEGER PRIMARY KEY, CustomerId INTEGER NOT NULL REFERENCES Customers(Id), Total REAL);
+            CREATE TABLE Customers (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL,
+                Email TEXT UNIQUE);
+            CREATE TABLE Orders (
+                Id INTEGER PRIMARY KEY,
+                CustomerId INTEGER NOT NULL REFERENCES Customers(Id) ON DELETE CASCADE,
+                Total REAL DEFAULT 0);
             CREATE INDEX IX_Orders_CustomerId ON Orders (CustomerId);
+            CREATE TABLE OrderLines (
+                OrderId INTEGER NOT NULL,
+                LineNo INTEGER NOT NULL,
+                Product TEXT NOT NULL,
+                PRIMARY KEY (OrderId, LineNo),
+                FOREIGN KEY (OrderId) REFERENCES Orders);
             CREATE VIEW CustomerTotals AS SELECT CustomerId, SUM(Total) AS Total FROM Orders GROUP BY CustomerId;
             INSERT INTO Customers (Name) VALUES ('Ada');
             """;

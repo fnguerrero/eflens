@@ -13,15 +13,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          # Ubuntu runners have Docker: SQL Server tests must run there, never be skipped.
+          - os: ubuntu-latest
+            require-docker: "1"
+          # Windows runners only run Windows containers, so the SQL Server tests skip themselves.
+          - os: windows-latest
+            require-docker: "0"
     runs-on: ${{ matrix.os }}
+    env:
+      EFLENS_REQUIRE_DOCKER: ${{ matrix.require-docker }}
 
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Restore
         run: dotnet restore
@@ -30,7 +38,7 @@ jobs:
         run: dotnet build --no-restore -c Release -warnaserror
 
       - name: Test
-        run: dotnet test --no-build -c Release --logger trx --collect:"XPlat Code Coverage" --results-directory TestResults
+        run: dotnet test --no-build -c Release --report-trx --coverage --results-directory TestResults
 
       - name: Upload test results
         if: always()
