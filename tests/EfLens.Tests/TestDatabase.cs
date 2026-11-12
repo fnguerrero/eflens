@@ -26,9 +26,9 @@ public sealed class TestDatabase : IDisposable
             CREATE INDEX IX_Orders_CustomerId ON Orders (CustomerId);
             CREATE TABLE OrderLines (
                 OrderId INTEGER NOT NULL,
-                LineNo INTEGER NOT NULL,
+                LineNumber INTEGER NOT NULL,
                 Product TEXT NOT NULL,
-                PRIMARY KEY (OrderId, LineNo),
+                PRIMARY KEY (OrderId, LineNumber),
                 FOREIGN KEY (OrderId) REFERENCES Orders);
             CREATE VIEW CustomerTotals AS SELECT CustomerId, SUM(Total) AS Total FROM Orders GROUP BY CustomerId;
             INSERT INTO Customers (Name) VALUES ('Ada');

@@ -57,7 +57,7 @@ public sealed class SqliteSchemaProviderTests : IDisposable
         Assert.Equal([1, 2], lines.Columns.Where(c => c.PrimaryKeyOrdinal is not null).Select(c => c.PrimaryKeyOrdinal!.Value));
         var pk = Assert.Single(lines.Indexes);
         Assert.True(pk.IsPrimaryKey);
-        Assert.Equal(["OrderId", "LineNo"], pk.Columns);
+        Assert.Equal(["OrderId", "LineNumber"], pk.Columns);
 
         var unique = Assert.Single(customers.Indexes);
         Assert.True(unique.IsUnique);

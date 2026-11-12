@@ -62,9 +62,9 @@ public sealed class SqlServerFixture : IAsyncLifetime
             """
             CREATE TABLE sales.OrderLines (
                 OrderId int NOT NULL,
-                LineNo int NOT NULL,
+                LineNumber int NOT NULL,
                 Product nvarchar(50) NOT NULL,
-                CONSTRAINT PK_OrderLines PRIMARY KEY (OrderId, LineNo),
+                CONSTRAINT PK_OrderLines PRIMARY KEY (OrderId, LineNumber),
                 CONSTRAINT FK_OrderLines_Orders FOREIGN KEY (OrderId) REFERENCES sales.Orders(Id))
             """,
             "CREATE TABLE dbo.Audit (Id int NOT NULL)",

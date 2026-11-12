@@ -71,7 +71,7 @@ public sealed class SqlServerSchemaProviderTests(SqlServerFixture fixture)
             [("PK_Customers", true, true), ("UQ_Customers_Email", true, false)],
             customers.Indexes.Select(i => (i.Name, i.IsUnique, i.IsPrimaryKey)));
         Assert.Contains(orders.Indexes, i => i is { Name: "IX_Orders_CustomerId", IsUnique: false } && i.Columns.SequenceEqual(["CustomerId"]));
-        Assert.Equal(["OrderId", "LineNo"], Assert.Single(lines.Indexes).Columns);
+        Assert.Equal(["OrderId", "LineNumber"], Assert.Single(lines.Indexes).Columns);
         Assert.Equal([1, 2], lines.Columns.Where(c => c.PrimaryKeyOrdinal is not null).Select(c => c.PrimaryKeyOrdinal!.Value));
     }
 
