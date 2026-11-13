@@ -1,5 +1,9 @@
 <Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Shop/Shop.csproj" />
+  </Folder>
   <Folder Name="/src/">
+    <Project Path="src/EfLens.ModelProbe/EfLens.ModelProbe.csproj" />
     <Project Path="src/EfLens/EfLens.csproj" />
   </Folder>
   <Folder Name="/tests/">

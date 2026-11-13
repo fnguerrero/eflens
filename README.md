@@ -10,7 +10,8 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io) server, wr
 Most MCP servers are written in Python or TypeScript, and the .NET ones focus on navigating source code with Roslyn.
 EfLens covers the other half of a .NET app: the database, and whether it still matches the EF Core model.
 
-> **Status:** early development. Schema tools and safe queries work on SQLite and SQL Server. See the [roadmap](#roadmap).
+> **Status:** early development. Schema tools and safe queries work on SQLite and SQL Server, and `ef_model` reads
+> the EF Core model of a compiled app. See the [roadmap](#roadmap).
 
 ## Tools
 
@@ -20,6 +21,7 @@ EfLens covers the other half of a .NET app: the database, and whether it still m
 | `describe_table` | Columns (declared type, nullability, default, primary key position) and indexes of a table or view |
 | `list_relations` | Foreign keys with their columns and `ON DELETE` action; pass a table to get the ones in and out of it |
 | `query` | Runs **one read-only SELECT** and returns `columns`, `rows` (as arrays) and `truncated`; anything else is rejected with the reason |
+| `ef_model` | Reads the EF Core model of your compiled app: entity → table → column mappings, and the tables EF Core expects (store types, nullability, defaults, keys, foreign keys, indexes) |
 
 Every tool is annotated `readOnlyHint: true`, `destructiveHint: false`. Names can be plain (`Orders`),
 schema-qualified (`sales.Orders`) or bracketed (`[sales].[Orders]`); an ambiguous name returns an error that lists
@@ -64,9 +66,31 @@ claude mcp add eflens -- dotnet run --project src/EfLens -- --provider sqlite --
 |---|---|---|
 | Most rows `query` returns (the agent can ask for fewer, never more) | `--max-rows` | 200 |
 | Seconds before a query is cancelled in the engine | `--timeout` | 15 |
+| Compiled app with the `DbContext` (its `.dll` in `bin/...`), for `ef_model` | `--ef-assembly` | none |
+| `DbContext` to use when the app has more than one | `--ef-context` | none |
 
 Configuration can also come from environment variables: `EfLens__Provider`, `EfLens__ConnectionString`,
-`EfLens__MaxRows`, `EfLens__QueryTimeoutSeconds`.
+`EfLens__MaxRows`, `EfLens__QueryTimeoutSeconds`, `EfLens__EfAssembly`, `EfLens__EfContext`.
+
+## How `ef_model` reads your model
+
+EfLens does not ship EF Core. It loads your compiled app into its own collectible `AssemblyLoadContext`, resolved
+with your app's `.deps.json`, so the model is built by **your** EF Core version and provider (EF Core 10 or later).
+A small probe assembly is loaded into that same context and returns the model as JSON; nothing crosses the boundary
+but text.
+
+- The `DbContext` is created the way `dotnet ef` does it at design time: an `IDesignTimeDbContextFactory<T>` first,
+  then a parameterless constructor. No connection is opened.
+- Assemblies are loaded from memory, so your build output is never locked: rebuild while EfLens runs and the next
+  call sees the new model.
+- ASP.NET Core shared-framework assemblies are resolved too, so `IdentityDbContext` works.
+
+[`samples/Shop`](samples/Shop) is a small app with a design-time factory, used by the tests and handy for trying it:
+
+```bash
+dotnet build samples/Shop
+dotnet run --project src/EfLens -- --provider sqlite --connection "Data Source=app.db" --ef-assembly samples/Shop/bin/Debug/net10.0/Shop.dll
+```
 
 ## Security model
 
@@ -118,6 +142,8 @@ xUnit v3 on Microsoft.Testing.Platform.
   servers, `OPENROWSET(BULK ...)`, locking hints) and for the SQLite authorizer (`PRAGMA`, `ATTACH`, transactions).
 - SQL Server tests against a real server started with [Testcontainers](https://dotnet.testcontainers.org/).
   Without Docker they are skipped locally; in CI (Ubuntu) Docker is required, so they can never be silently skipped.
+- EF Core tests that load `samples/Shop` from its build output, like any user app: store types, migration-style
+  key names, context selection, wrong assemblies, and a check that the DLL is never locked.
 - End-to-end tests that start the real server and talk to it through the official MCP client over in-memory pipes.
 - CI runs on Ubuntu and Windows, with warnings as errors, TRX reports and code coverage.
 
@@ -126,7 +152,7 @@ xUnit v3 on Microsoft.Testing.Platform.
 - [x] stdio server on the official MCP C# SDK, `list_tables` on SQLite, CI
 - [x] `describe_table` and `list_relations` (columns, keys, indexes); SQL Server via Testcontainers
 - [x] Safe `query`: engine authorizer (SQLite), ScriptDom validation and rolled-back transaction (SQL Server), row and time limits
-- [ ] Load an EF Core `DbContext` and map entities to tables
+- [x] Load an EF Core `DbContext` (isolated load context, app's own EF Core) and map entities to tables
 - [ ] Drift detection: pending migrations and model vs. schema differences
 - [ ] PostgreSQL and execution plans (`explain`)
 - [ ] Ship as a .NET global tool on NuGet and list it in the MCP Registry

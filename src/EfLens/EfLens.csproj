@@ -11,6 +11,19 @@
     <InternalsVisibleTo Include="EfLens.Tests" />
   </ItemGroup>
 
+  <!--
+    The probe is never referenced at compile time: it is copied next to EfLens.dll and loaded into the
+    target app's AssemblyLoadContext. Only the JSON contract is shared, as linked source.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\EfLens.ModelProbe\EfLens.ModelProbe.csproj"
+                      ReferenceOutputAssembly="false"
+                      OutputItemType="Content"
+                      CopyToOutputDirectory="PreserveNewest"
+                      CopyToPublishDirectory="PreserveNewest" />
+    <Compile Include="..\EfLens.ModelProbe\EfModelContract.cs" Link="Ef\EfModelContract.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />

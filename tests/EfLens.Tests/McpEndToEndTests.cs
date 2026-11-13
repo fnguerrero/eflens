@@ -21,7 +21,12 @@ public sealed class McpEndToEndTests : IAsyncLifetime
     public async ValueTask InitializeAsync()
     {
         var builder = Host.CreateEmptyApplicationBuilder(settings: null);
-        builder.Services.AddEfLens(new EfLensOptions { Provider = "sqlite", ConnectionString = _db.ConnectionString });
+        builder.Services.AddEfLens(new EfLensOptions
+        {
+            Provider = "sqlite",
+            ConnectionString = _db.ConnectionString,
+            EfAssembly = ShopSample.AssemblyPath,
+        });
         builder.Services
             .AddMcpServer()
             .WithStreamServerTransport(_clientToServer.Reader.AsStream(), _serverToClient.Writer.AsStream())
@@ -47,7 +52,7 @@ public sealed class McpEndToEndTests : IAsyncLifetime
     {
         var tools = await _client.ListToolsAsync(cancellationToken: Ct);
 
-        Assert.Equal(["describe_table", "list_relations", "list_tables", "query"], tools.Select(t => t.Name).Order());
+        Assert.Equal(["describe_table", "ef_model", "list_relations", "list_tables", "query"], tools.Select(t => t.Name).Order());
         Assert.All(tools, tool =>
         {
             Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint);
@@ -121,6 +126,17 @@ public sealed class McpEndToEndTests : IAsyncLifetime
         Assert.True(result.IsError);
         var message = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
         Assert.Contains("DELETE is not allowed", message);
+    }
+
+    [Fact]
+    public async Task Calling_ef_model_returns_entities_and_tables_from_the_compiled_app()
+    {
+        var model = await CallAsync("ef_model");
+
+        Assert.Equal("Shop.ShopContext", model.GetProperty("context").GetString());
+        Assert.Equal(["Customer", "Order", "OrderLine"],
+            model.GetProperty("entities").EnumerateArray().Select(e => e.GetProperty("entity").GetString()!));
+        Assert.Equal(3, model.GetProperty("tables").GetArrayLength());
     }
 
     [Fact]

@@ -13,6 +13,8 @@ builder.Configuration.AddCommandLine(args, new Dictionary<string, string>
     ["--connection"] = $"{EfLensOptions.SectionName}:{nameof(EfLensOptions.ConnectionString)}",
     ["--max-rows"] = $"{EfLensOptions.SectionName}:{nameof(EfLensOptions.MaxRows)}",
     ["--timeout"] = $"{EfLensOptions.SectionName}:{nameof(EfLensOptions.QueryTimeoutSeconds)}",
+    ["--ef-assembly"] = $"{EfLensOptions.SectionName}:{nameof(EfLensOptions.EfAssembly)}",
+    ["--ef-context"] = $"{EfLensOptions.SectionName}:{nameof(EfLensOptions.EfContext)}",
 });
 
 // stdout belongs to the MCP protocol: every log line goes to stderr.

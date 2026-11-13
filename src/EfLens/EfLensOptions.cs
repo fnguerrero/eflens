@@ -16,4 +16,10 @@ public sealed class EfLensOptions
 
     /// <summary>Seconds a query may run before it is cancelled in the engine.</summary>
     public int QueryTimeoutSeconds { get; set; } = 15;
+
+    /// <summary>Path to the compiled app (its .dll in bin/...) that contains the DbContext. Optional.</summary>
+    public string? EfAssembly { get; set; }
+
+    /// <summary>DbContext to use when the assembly has more than one. Optional.</summary>
+    public string? EfContext { get; set; }
 }

@@ -1,3 +1,4 @@
+using EfLens.Ef;
 using EfLens.Providers;
 using EfLens.Tools;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,10 +21,11 @@ public static class EfLensServiceCollectionExtensions
         services.AddSingleton(options);
         services.AddSingleton<ISchemaProvider>(provider);
         services.AddSingleton<IQueryRunner>(provider);
+        services.AddSingleton<IEfModelSource, EfModelLoader>();
         return services;
     }
 
     /// <summary>Adds every EfLens tool to the MCP server.</summary>
     public static IMcpServerBuilder WithEfLensTools(this IMcpServerBuilder builder) =>
-        builder.WithTools<SchemaTools>().WithTools<QueryTools>();
+        builder.WithTools<SchemaTools>().WithTools<QueryTools>().WithTools<EfTools>();
 }
