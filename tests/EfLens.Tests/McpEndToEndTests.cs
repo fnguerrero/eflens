@@ -47,7 +47,7 @@ public sealed class McpEndToEndTests : IAsyncLifetime
     {
         var tools = await _client.ListToolsAsync(cancellationToken: Ct);
 
-        Assert.Equal(["describe_table", "list_relations", "list_tables"], tools.Select(t => t.Name).Order());
+        Assert.Equal(["describe_table", "list_relations", "list_tables", "query"], tools.Select(t => t.Name).Order());
         Assert.All(tools, tool =>
         {
             Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint);
@@ -96,6 +96,31 @@ public sealed class McpEndToEndTests : IAsyncLifetime
         var message = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
         Assert.Contains("Invoices", message);
         Assert.Contains("list_tables", message);
+    }
+
+    [Fact]
+    public async Task Calling_query_returns_columns_rows_and_the_truncation_flag()
+    {
+        var result = await CallAsync("query", new()
+        {
+            ["sql"] = "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+            ["maxRows"] = 2,
+        });
+
+        Assert.Equal(["name"], result.GetProperty("columns").EnumerateArray().Select(c => c.GetString()!));
+        Assert.Equal(2, result.GetProperty("rows").GetArrayLength());
+        Assert.True(result.GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
+    public async Task A_write_through_query_comes_back_as_a_tool_error_with_the_reason()
+    {
+        var result = await _client.CallToolAsync("query",
+            new Dictionary<string, object?> { ["sql"] = "DELETE FROM Orders" }, cancellationToken: Ct);
+
+        Assert.True(result.IsError);
+        var message = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
+        Assert.Contains("DELETE is not allowed", message);
     }
 
     [Fact]

@@ -1,11 +1,14 @@
+using System.Diagnostics;
 using Microsoft.Data.Sqlite;
+using SQLitePCL;
 
 namespace EfLens.Providers;
 
-/// <summary>SQLite schema provider. Every connection is forced to read-only mode.</summary>
-public sealed class SqliteSchemaProvider : ISchemaProvider
+/// <summary>SQLite provider. Every connection is forced to read-only mode.</summary>
+public sealed class SqliteSchemaProvider : IDatabaseProvider
 {
     private readonly string _connectionString;
+    private readonly string _queryConnectionString;
 
     public SqliteSchemaProvider(string connectionString)
     {
@@ -13,11 +16,106 @@ public sealed class SqliteSchemaProvider : ISchemaProvider
             throw new ArgumentException("A SQLite connection string is required.", nameof(connectionString));
 
         // ReadOnly also means a missing file is an error instead of a new empty database.
-        _connectionString = new SqliteConnectionStringBuilder(connectionString)
-        {
-            Mode = SqliteOpenMode.ReadOnly,
-        }.ToString();
+        var builder = new SqliteConnectionStringBuilder(connectionString) { Mode = SqliteOpenMode.ReadOnly };
+        _connectionString = builder.ToString();
+
+        // Query connections carry an authorizer; they are never pooled, so it cannot leak into schema calls.
+        builder.Pooling = false;
+        _queryConnectionString = builder.ToString();
     }
+
+    /// <summary>
+    /// Four layers, from the engine out: the file is opened read-only, an authorizer lets the SQLite engine itself
+    /// refuse anything but reads (no PRAGMA, ATTACH, transactions or writes), ATTACH is limited to zero databases,
+    /// and the text must hold exactly one statement. Long queries are interrupted inside the engine.
+    /// </summary>
+    public async Task<QueryResult> QueryAsync(string sql, QueryLimits limits, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sql))
+            throw new QueryRejectedException("the query is empty.");
+
+        var stopwatch = Stopwatch.StartNew();
+        await using var connection = new SqliteConnection(_queryConnectionString);
+        await connection.OpenAsync(cancellationToken);
+        var db = connection.Handle!;
+
+        raw.sqlite3_limit(db, raw.SQLITE_LIMIT_ATTACHED, 0);
+        string? denied = null;
+        raw.sqlite3_set_authorizer(db, (strdelegate_authorizer)((_, action, table, _, _, _) =>
+        {
+            if (action is raw.SQLITE_SELECT or raw.SQLITE_READ or raw.SQLITE_FUNCTION or raw.SQLITE_RECURSIVE)
+                return raw.SQLITE_OK;
+            denied ??= DescribeAction(action, table);
+            return raw.SQLITE_DENY;
+        }), null);
+
+        EnsureSingleReadOnlyStatement(db, sql, () => denied);
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(limits.Timeout);
+        await using var interrupt = timeout.Token.Register(() => raw.sqlite3_interrupt(db));
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await using var reader = await command.ExecuteReaderAsync(timeout.Token);
+            var (columns, rows, truncated) = await QueryRows.ReadAsync(reader, limits, timeout.Token);
+            return new QueryResult(columns, rows, truncated, stopwatch.ElapsedMilliseconds);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or SqliteException { SqliteErrorCode: raw.SQLITE_INTERRUPT }
+                                   && !cancellationToken.IsCancellationRequested)
+        {
+            throw new QueryTimeoutException(limits.Timeout);
+        }
+        catch (SqliteException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new QueryFailedException(ex.Message);
+        }
+    }
+
+    /// <summary>Prepares the text with the engine: the authorizer runs here, and the tail must hold no statement.</summary>
+    private static void EnsureSingleReadOnlyStatement(sqlite3 db, string sql, Func<string?> denied)
+    {
+        var rc = raw.sqlite3_prepare_v2(db, sql, out var statement, out var tail);
+        using (statement)
+        {
+            if (rc != raw.SQLITE_OK)
+            {
+                if (denied() is { } action)
+                    throw new QueryRejectedException($"{action} is not allowed.");
+                throw new QueryFailedException(raw.sqlite3_errmsg(db).utf8_to_string());
+            }
+            if (statement is null || statement.IsInvalid)
+                throw new QueryRejectedException("the query has no statement.");
+        }
+
+        if (string.IsNullOrWhiteSpace(tail))
+            return;
+
+        // A tail with only comments or semicolons prepares to nothing; anything else is a second statement.
+        rc = raw.sqlite3_prepare_v2(db, tail, out var next, out _);
+        using (next)
+        {
+            if (rc != raw.SQLITE_OK || (next is not null && !next.IsInvalid))
+                throw new QueryRejectedException("found more than one statement; send exactly one.");
+        }
+    }
+
+    /// <summary>CREATE and DROP first show up as writes to the schema table; name them for what they are.</summary>
+    private static string DescribeAction(int action, string? table) => action switch
+    {
+        raw.SQLITE_INSERT or raw.SQLITE_UPDATE or raw.SQLITE_DELETE
+            when table is "sqlite_master" or "sqlite_schema" or "sqlite_temp_master" => "Changing the schema",
+        raw.SQLITE_INSERT => "INSERT",
+        raw.SQLITE_UPDATE => "UPDATE",
+        raw.SQLITE_DELETE => "DELETE",
+        raw.SQLITE_PRAGMA => "PRAGMA",
+        raw.SQLITE_ATTACH => "ATTACH",
+        raw.SQLITE_DETACH => "DETACH",
+        raw.SQLITE_TRANSACTION or raw.SQLITE_SAVEPOINT => "Transaction control",
+        _ => "Changing the schema",
+    };
 
     public async Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken cancellationToken = default)
     {

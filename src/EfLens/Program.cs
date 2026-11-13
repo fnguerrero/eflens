@@ -11,6 +11,8 @@ builder.Configuration.AddCommandLine(args, new Dictionary<string, string>
 {
     ["--provider"] = $"{EfLensOptions.SectionName}:{nameof(EfLensOptions.Provider)}",
     ["--connection"] = $"{EfLensOptions.SectionName}:{nameof(EfLensOptions.ConnectionString)}",
+    ["--max-rows"] = $"{EfLensOptions.SectionName}:{nameof(EfLensOptions.MaxRows)}",
+    ["--timeout"] = $"{EfLensOptions.SectionName}:{nameof(EfLensOptions.QueryTimeoutSeconds)}",
 });
 
 // stdout belongs to the MCP protocol: every log line goes to stderr.

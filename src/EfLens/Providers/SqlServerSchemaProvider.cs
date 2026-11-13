@@ -1,13 +1,74 @@
+using System.Data;
+using System.Diagnostics;
 using Microsoft.Data.SqlClient;
 
 namespace EfLens.Providers;
 
 /// <summary>
-/// SQL Server schema provider. It only reads catalog views; every value travels as a parameter and
+/// SQL Server provider. Schema calls only read catalog views; every value travels as a parameter and
 /// object names are resolved with <c>QUOTENAME</c>/<c>OBJECT_ID</c>, never concatenated into SQL.
 /// </summary>
-public sealed class SqlServerSchemaProvider : ISchemaProvider
+public sealed class SqlServerSchemaProvider : IDatabaseProvider
 {
+    /// <summary>
+    /// Three layers: ScriptDom validates a single plain SELECT, the query runs in a transaction that is always
+    /// rolled back, and limits cut it short (rows stop being read and the server is told to cancel).
+    /// The login should still be read-only (db_datareader): that is the layer EfLens cannot provide.
+    /// </summary>
+    public async Task<QueryResult> QueryAsync(string sql, QueryLimits limits, CancellationToken cancellationToken = default)
+    {
+        SqlServerQueryValidator.Validate(sql);
+
+        var stopwatch = Stopwatch.StartNew();
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(limits.Timeout);
+
+        await using var command = new SqlCommand(sql, connection, transaction)
+        {
+            CommandTimeout = (int)Math.Ceiling(limits.Timeout.TotalSeconds) + 5, // the token fires first; this is a backstop
+        };
+
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(timeout.Token);
+            var (columns, rows, truncated) = await QueryRows.ReadAsync(reader, limits, timeout.Token);
+
+            // Disposing a reader drains the remaining rows; cancelling first stops the server instead.
+            if (truncated)
+                command.Cancel();
+
+            return new QueryResult(columns, rows, truncated, stopwatch.ElapsedMilliseconds);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or SqlException { Number: -2 }
+                                   && !cancellationToken.IsCancellationRequested)
+        {
+            throw new QueryTimeoutException(limits.Timeout);
+        }
+        catch (SqlException) when (!cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
+        {
+            // Cancelling a running command surfaces as "Operation cancelled by user", not as a timeout.
+            throw new QueryTimeoutException(limits.Timeout);
+        }
+        catch (SqlException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new QueryFailedException(ex.Message);
+        }
+        finally
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            catch (Exception) when (connection.State != ConnectionState.Open || transaction.Connection is null)
+            {
+                // The server already ended the transaction (e.g. after a cancel); nothing to roll back.
+            }
+        }
+    }
+
     private readonly string _connectionString;
 
     public SqlServerSchemaProvider(string connectionString)

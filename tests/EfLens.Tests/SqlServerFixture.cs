@@ -70,6 +70,8 @@ public sealed class SqlServerFixture : IAsyncLifetime
             "CREATE TABLE dbo.Audit (Id int NOT NULL)",
             "CREATE TABLE sales.Audit (Id int NOT NULL)",
             "CREATE VIEW dbo.CustomerTotals AS SELECT CustomerId, SUM(Total) AS Total FROM sales.Orders GROUP BY CustomerId",
+            "INSERT INTO dbo.Customers (Name, Email) VALUES (N'Ada', 'ada@example.com'), (N'Grace', NULL)",
+            "INSERT INTO sales.Orders VALUES (1, 1, 10.50, '2026-01-01T10:00:00'), (2, 1, 5.00, '2026-01-02T11:30:00')",
         ];
         foreach (var batch in batches)
             await new SqlCommand(batch, db).ExecuteNonQueryAsync();

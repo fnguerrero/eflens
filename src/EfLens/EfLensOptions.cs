@@ -1,6 +1,6 @@
 namespace EfLens;
 
-/// <summary>Connection settings for the database EfLens inspects.</summary>
+/// <summary>Connection settings and query limits.</summary>
 public sealed class EfLensOptions
 {
     public const string SectionName = "EfLens";
@@ -10,4 +10,10 @@ public sealed class EfLensOptions
 
     /// <summary>ADO.NET connection string. EfLens always opens it read-only.</summary>
     public string ConnectionString { get; set; } = "";
+
+    /// <summary>Most rows the <c>query</c> tool returns; the agent can ask for fewer, never more.</summary>
+    public int MaxRows { get; set; } = 200;
+
+    /// <summary>Seconds a query may run before it is cancelled in the engine.</summary>
+    public int QueryTimeoutSeconds { get; set; } = 15;
 }

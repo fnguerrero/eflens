@@ -9,7 +9,7 @@ public static class EfLensServiceCollectionExtensions
     /// <summary>Registers the schema provider selected by <paramref name="options"/>.</summary>
     public static IServiceCollection AddEfLens(this IServiceCollection services, EfLensOptions options)
     {
-        ISchemaProvider provider = options.Provider.Trim().ToLowerInvariant() switch
+        IDatabaseProvider provider = options.Provider.Trim().ToLowerInvariant() switch
         {
             "sqlite" => new SqliteSchemaProvider(options.ConnectionString),
             "sqlserver" or "mssql" => new SqlServerSchemaProvider(options.ConnectionString),
@@ -18,11 +18,12 @@ public static class EfLensServiceCollectionExtensions
         };
 
         services.AddSingleton(options);
-        services.AddSingleton(provider);
+        services.AddSingleton<ISchemaProvider>(provider);
+        services.AddSingleton<IQueryRunner>(provider);
         return services;
     }
 
     /// <summary>Adds every EfLens tool to the MCP server.</summary>
     public static IMcpServerBuilder WithEfLensTools(this IMcpServerBuilder builder) =>
-        builder.WithTools<SchemaTools>();
+        builder.WithTools<SchemaTools>().WithTools<QueryTools>();
 }

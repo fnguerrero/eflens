@@ -44,6 +44,3 @@ public interface ISchemaProvider
     /// <exception cref="SchemaLookupException">The table does not exist or the name is ambiguous.</exception>
     Task<IReadOnlyList<ForeignKeyInfo>> GetRelationsAsync(string? table, CancellationToken cancellationToken = default);
 }
-
-/// <summary>A table name that could not be resolved. The message is safe to show to the MCP client.</summary>
-public sealed class SchemaLookupException(string message) : Exception(message);
