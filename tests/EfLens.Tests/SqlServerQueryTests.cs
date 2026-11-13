@@ -57,8 +57,12 @@ public sealed class SqlServerQueryTests(SqlServerFixture fixture)
     [Fact]
     public async Task A_runaway_query_is_cancelled_on_the_server()
     {
+        // An endless recursive CTE: unlike a cross join COUNT, the optimizer cannot shortcut it.
         var ex = await Assert.ThrowsAsync<QueryTimeoutException>(() => Provider.QueryAsync(
-            "SELECT COUNT_BIG(*) FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b CROSS JOIN sys.all_objects AS c",
+            """
+            WITH n AS (SELECT CAST(1 AS bigint) AS x UNION ALL SELECT x + 1 FROM n)
+            SELECT COUNT_BIG(*) FROM n OPTION (MAXRECURSION 0)
+            """,
             Limits with { Timeout = TimeSpan.FromSeconds(1) }, Ct));
 
         Assert.Contains("1 s", ex.Message);
