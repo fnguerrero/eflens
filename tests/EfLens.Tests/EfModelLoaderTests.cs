@@ -67,6 +67,18 @@ public sealed class EfModelLoaderTests
     }
 
     [Fact]
+    public async Task Migrations_come_from_the_assembly_with_the_history_table_ef_core_uses()
+    {
+        var migrations = (await Loader().GetModelAsync(null, Ct)).Migrations;
+
+        Assert.Collection(migrations.Defined,
+            id => Assert.EndsWith("_InitialCreate", id),
+            id => Assert.EndsWith("_AddOrderStatus", id));
+        Assert.False(migrations.HasPendingModelChanges);
+        Assert.Equal((null, "__EFMigrationsHistory"), (migrations.HistorySchema, migrations.HistoryTable));
+    }
+
+    [Fact]
     public async Task Each_call_reloads_and_the_build_output_is_never_locked()
     {
         await Loader().GetModelAsync(null, Ct);

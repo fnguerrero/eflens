@@ -21,7 +21,9 @@ public static class EfLensServiceCollectionExtensions
         services.AddSingleton(options);
         services.AddSingleton<ISchemaProvider>(provider);
         services.AddSingleton<IQueryRunner>(provider);
+        services.AddSingleton(provider);
         services.AddSingleton<IEfModelSource, EfModelLoader>();
+        services.AddSingleton<EfDriftService>();
         return services;
     }
 

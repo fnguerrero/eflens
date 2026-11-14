@@ -197,6 +197,37 @@ public sealed class SqlServerSchemaProvider : IDatabaseProvider
             .ToList();
     }
 
+    public async Task<IReadOnlyList<string>?> GetAppliedMigrationsAsync(
+        string? schema, string table, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        // The name is quoted by the server (QUOTENAME), never concatenated on this side.
+        await using var command = new SqlCommand("""
+            DECLARE @name nvarchar(600) = QUOTENAME(ISNULL(@schema, SCHEMA_NAME())) + N'.' + QUOTENAME(@table);
+            IF OBJECT_ID(@name, N'U') IS NULL
+                SELECT CAST(0 AS bit);
+            ELSE
+            BEGIN
+                SELECT CAST(1 AS bit);
+                DECLARE @sql nvarchar(max) = N'SELECT MigrationId FROM ' + @name + N' ORDER BY MigrationId';
+                EXEC sp_executesql @sql;
+            END
+            """, connection);
+        command.Parameters.Add("@schema", SqlDbType.NVarChar, 128).Value = (object?)schema ?? DBNull.Value;
+        command.Parameters.Add("@table", SqlDbType.NVarChar, 128).Value = table;
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        if (!reader.GetBoolean(0))
+            return null;
+
+        await reader.NextResultAsync(cancellationToken);
+        var applied = new List<string>();
+        while (await reader.ReadAsync(cancellationToken))
+            applied.Add(reader.GetString(0));
+        return applied;
+    }
+
     private async Task<SqlConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var connection = new SqlConnection(_connectionString);

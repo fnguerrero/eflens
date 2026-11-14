@@ -52,7 +52,7 @@ public sealed class McpEndToEndTests : IAsyncLifetime
     {
         var tools = await _client.ListToolsAsync(cancellationToken: Ct);
 
-        Assert.Equal(["describe_table", "ef_model", "list_relations", "list_tables", "query"], tools.Select(t => t.Name).Order());
+        Assert.Equal(["describe_table", "ef_drift", "ef_model", "list_relations", "list_tables", "query"], tools.Select(t => t.Name).Order());
         Assert.All(tools, tool =>
         {
             Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint);
@@ -137,6 +137,18 @@ public sealed class McpEndToEndTests : IAsyncLifetime
         Assert.Equal(["Customer", "Order", "OrderLine"],
             model.GetProperty("entities").EnumerateArray().Select(e => e.GetProperty("entity").GetString()!));
         Assert.Equal(3, model.GetProperty("tables").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Calling_ef_drift_on_a_database_never_migrated_lists_every_migration_as_pending()
+    {
+        var report = await CallAsync("ef_drift");
+
+        Assert.False(report.GetProperty("inSync").GetBoolean());
+        var migrations = report.GetProperty("migrations");
+        Assert.False(migrations.GetProperty("historyTableExists").GetBoolean());
+        Assert.Equal(2, migrations.GetProperty("pending").GetArrayLength());
+        Assert.Contains("__EFMigrationsHistory", report.GetProperty("summary").GetString());
     }
 
     [Fact]

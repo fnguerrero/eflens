@@ -10,8 +10,8 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io) server, wr
 Most MCP servers are written in Python or TypeScript, and the .NET ones focus on navigating source code with Roslyn.
 EfLens covers the other half of a .NET app: the database, and whether it still matches the EF Core model.
 
-> **Status:** early development. Schema tools and safe queries work on SQLite and SQL Server, and `ef_model` reads
-> the EF Core model of a compiled app. See the [roadmap](#roadmap).
+> **Status:** early development. Schema tools and safe queries work on SQLite and SQL Server; `ef_model` reads the
+> EF Core model of a compiled app and `ef_drift` tells whether the database still matches it. See the [roadmap](#roadmap).
 
 ## Tools
 
@@ -22,6 +22,7 @@ EfLens covers the other half of a .NET app: the database, and whether it still m
 | `list_relations` | Foreign keys with their columns and `ON DELETE` action; pass a table to get the ones in and out of it |
 | `query` | Runs **one read-only SELECT** and returns `columns`, `rows` (as arrays) and `truncated`; anything else is rejected with the reason |
 | `ef_model` | Reads the EF Core model of your compiled app: entity → table → column mappings, and the tables EF Core expects (store types, nullability, defaults, keys, foreign keys, indexes) |
+| `ef_drift` | Compares that model with the real database: pending migrations, applied migrations the build does not have, model changes with no migration, and every schema difference |
 
 Every tool is annotated `readOnlyHint: true`, `destructiveHint: false`. Names can be plain (`Orders`),
 schema-qualified (`sales.Orders`) or bracketed (`[sales].[Orders]`); an ambiguous name returns an error that lists
@@ -66,7 +67,7 @@ claude mcp add eflens -- dotnet run --project src/EfLens -- --provider sqlite --
 |---|---|---|
 | Most rows `query` returns (the agent can ask for fewer, never more) | `--max-rows` | 200 |
 | Seconds before a query is cancelled in the engine | `--timeout` | 15 |
-| Compiled app with the `DbContext` (its `.dll` in `bin/...`), for `ef_model` | `--ef-assembly` | none |
+| Compiled app with the `DbContext` (its `.dll` in `bin/...`), for `ef_model` and `ef_drift` | `--ef-assembly` | none |
 | `DbContext` to use when the app has more than one | `--ef-context` | none |
 
 Configuration can also come from environment variables: `EfLens__Provider`, `EfLens__ConnectionString`,
@@ -85,12 +86,67 @@ but text.
   call sees the new model.
 - ASP.NET Core shared-framework assemblies are resolved too, so `IdentityDbContext` works.
 
-[`samples/Shop`](samples/Shop) is a small app with a design-time factory, used by the tests and handy for trying it:
+[`samples/Shop`](samples/Shop) is a small app with a design-time factory and two migrations, used by the tests and
+handy for trying it. `dotnet Shop.dll migrate "<connection>" [migration]` builds a SQL Server database at any migration.
 
 ```bash
 dotnet build samples/Shop
-dotnet run --project src/EfLens -- --provider sqlite --connection "Data Source=app.db" --ef-assembly samples/Shop/bin/Debug/net10.0/Shop.dll
+dotnet run --project src/EfLens -- --provider sqlserver --connection "Server=localhost;Database=Shop;..." --ef-assembly samples/Shop/bin/Debug/net10.0/Shop.dll
 ```
+
+## Catching drift with `ef_drift`
+
+The database in production and the model in your code drift apart quietly: a migration that was never deployed,
+a column widened by hand during an incident, an index dropped to speed up a bulk load. `ef_drift` finds all of it
+in one call, without applying anything.
+
+A real case, reproduced by the tests against SQL Server: the Shop database was deployed up to `InitialCreate`
+(the `AddOrderStatus` migration never reached it), and then someone fixed things by hand:
+
+```sql
+ALTER TABLE dbo.Customers ALTER COLUMN Name nvarchar(200) NOT NULL;  -- names were being cut
+DROP INDEX IX_Customers_Email ON dbo.Customers;                     -- "it was slowing the import"
+ALTER TABLE sales.OrderLines ADD Discount decimal(5,2) NULL;         -- added straight in the database
+```
+
+`ef_drift` returns:
+
+```json
+{
+  "context": "Shop.ShopContext",
+  "inSync": false,
+  "summary": "Out of sync: 1 pending migration (20261114045603_AddOrderStatus); 4 schema differences. Pending migrations usually explain part of the differences: apply them (`dotnet ef database update`) and run ef_drift again; whatever remains was changed by hand.",
+  "migrations": {
+    "historyTable": "__EFMigrationsHistory",
+    "historyTableExists": true,
+    "applied": ["20261114045550_InitialCreate"],
+    "pending": ["20261114045603_AddOrderStatus"],
+    "notInAssembly": [],
+    "modelChangedSinceLastMigration": false
+  },
+  "differences": [
+    { "kind": "type_mismatch", "table": "Customers", "object": "Name", "expected": "nvarchar(100)", "actual": "nvarchar(200)" },
+    { "kind": "missing_index", "table": "Customers", "object": "IX_Customers_Email", "expected": "UNIQUE (Email)", "actual": null },
+    { "kind": "extra_column", "table": "sales.OrderLines", "object": "Discount", "expected": null, "actual": "decimal(5,2) NULL" },
+    { "kind": "missing_column", "table": "sales.Orders", "object": "Status", "expected": "nvarchar(20) NOT NULL", "actual": null }
+  ]
+}
+```
+
+The agent can tell the two causes apart: `Orders.Status` comes with the pending migration, the other three were
+made by hand and need either a migration or a rollback.
+
+What is compared:
+
+- **Migrations:** the ones compiled into the app against the history table EF Core uses (custom name and schema
+  included), plus EF Core's own check for model changes that have no migration yet.
+- **Tables and columns:** missing or extra, store type (spelled the same way on both sides: `datetime2` is
+  `datetime2(7)`), nullability.
+- **Keys:** primary key columns and order; foreign keys matched by columns and target table, with `ON DELETE`;
+  indexes and unique constraints matched by columns and uniqueness. Names are not compared, so a database whose
+  constraints were named by hand is not reported as different.
+- Not yet: default values, computed columns, check constraints, index filters and sequences. A table without a
+  schema in the model matches the database's default schema (`dbo`, or `main` in SQLite).
 
 ## Security model
 
@@ -143,7 +199,9 @@ xUnit v3 on Microsoft.Testing.Platform.
 - SQL Server tests against a real server started with [Testcontainers](https://dotnet.testcontainers.org/).
   Without Docker they are skipped locally; in CI (Ubuntu) Docker is required, so they can never be silently skipped.
 - EF Core tests that load `samples/Shop` from its build output, like any user app: store types, migration-style
-  key names, context selection, wrong assemblies, and a check that the DLL is never locked.
+  key names, migrations, context selection, wrong assemblies, and a check that the DLL is never locked.
+- Drift: every rule unit tested on hand-built catalogs, and end to end on SQL Server, where Shop migrates its own
+  databases (one in sync, one with a missing deploy and a hotfix by hand) and `ef_drift` must find each change.
 - End-to-end tests that start the real server and talk to it through the official MCP client over in-memory pipes.
 - CI runs on Ubuntu and Windows, with warnings as errors, TRX reports and code coverage.
 
@@ -153,7 +211,7 @@ xUnit v3 on Microsoft.Testing.Platform.
 - [x] `describe_table` and `list_relations` (columns, keys, indexes); SQL Server via Testcontainers
 - [x] Safe `query`: engine authorizer (SQLite), ScriptDom validation and rolled-back transaction (SQL Server), row and time limits
 - [x] Load an EF Core `DbContext` (isolated load context, app's own EF Core) and map entities to tables
-- [ ] Drift detection: pending migrations and model vs. schema differences
+- [x] Drift detection: pending migrations and model vs. schema differences
 - [ ] PostgreSQL and execution plans (`explain`)
 - [ ] Ship as a .NET global tool on NuGet and list it in the MCP Registry
 

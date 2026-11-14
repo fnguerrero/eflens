@@ -19,6 +19,7 @@ public sealed class Order
     public Customer Customer { get; set; } = null!;
     public decimal Total { get; set; }
     public DateTime PlacedAt { get; set; }
+    public string Status { get; set; } = "placed";
     public List<OrderLine> Lines { get; } = [];
 }
 
@@ -51,6 +52,7 @@ public sealed class ShopContext(DbContextOptions<ShopContext> options) : DbConte
             order.Property(o => o.Id).ValueGeneratedNever();
             order.Property(o => o.Total).HasPrecision(10, 2).HasDefaultValue(0m);
             order.Property(o => o.PlacedAt).HasPrecision(3);
+            order.Property(o => o.Status).HasMaxLength(20).HasDefaultValue("placed");
             order.HasOne(o => o.Customer).WithMany(c => c.Orders).OnDelete(DeleteBehavior.Cascade);
         });
 

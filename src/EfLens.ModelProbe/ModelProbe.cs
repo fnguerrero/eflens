@@ -118,7 +118,30 @@ public static class ModelProbe
             typeof(DbContext).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0]
                 ?? typeof(DbContext).Assembly.GetName().Version?.ToString() ?? "unknown",
             entities,
-            tables);
+            tables,
+            ReadMigrations(context));
+    }
+
+    private static EfMigrationsInfo ReadMigrations(DbContext context)
+    {
+        var options = RelationalOptionsExtension.Extract(context.GetService<IDbContextOptions>());
+
+        bool? pendingChanges;
+        try
+        {
+            // Compares the model with the last migration's snapshot; no connection involved.
+            pendingChanges = context.Database.HasPendingModelChanges();
+        }
+        catch (Exception)
+        {
+            pendingChanges = null;
+        }
+
+        return new EfMigrationsInfo(
+            [.. context.Database.GetMigrations()],
+            pendingChanges,
+            options.MigrationsHistoryTableSchema,
+            options.MigrationsHistoryTableName ?? HistoryRepository.DefaultTableName);
     }
 
     /// <summary>Same wording the schema tools use for the database side, so both can be compared.</summary>

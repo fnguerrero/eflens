@@ -25,8 +25,17 @@ public interface IQueryRunner
     Task<QueryResult> QueryAsync(string sql, QueryLimits limits, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Reads the migrations EF Core recorded as applied.</summary>
+public interface IMigrationHistory
+{
+    /// <param name="schema">Schema of the history table, or null for the connection's default schema.</param>
+    /// <param name="table">History table name, usually <c>__EFMigrationsHistory</c>.</param>
+    /// <returns>Applied migration ids in order, or null when the history table does not exist.</returns>
+    Task<IReadOnlyList<string>?> GetAppliedMigrationsAsync(string? schema, string table, CancellationToken cancellationToken = default);
+}
+
 /// <summary>Everything a database provider offers.</summary>
-public interface IDatabaseProvider : ISchemaProvider, IQueryRunner;
+public interface IDatabaseProvider : ISchemaProvider, IQueryRunner, IMigrationHistory;
 
 internal static class QueryRows
 {

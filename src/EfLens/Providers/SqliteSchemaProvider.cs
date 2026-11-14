@@ -238,6 +238,28 @@ public sealed class SqliteSchemaProvider : IDatabaseProvider
         return relations;
     }
 
+    /// <remarks>SQLite has no schemas, so <paramref name="schema"/> is ignored.</remarks>
+    public async Task<IReadOnlyList<string>?> GetAppliedMigrationsAsync(
+        string? schema, string table, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+
+        await using var exists = connection.CreateCommand();
+        exists.CommandText = "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = $name COLLATE NOCASE";
+        exists.Parameters.AddWithValue("$name", table);
+        if (await exists.ExecuteScalarAsync(cancellationToken) is not string actual)
+            return null;
+
+        // The identifier comes from the catalog, quoted the way SQLite requires.
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT MigrationId FROM \"{actual.Replace("\"", "\"\"")}\" ORDER BY MigrationId";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var applied = new List<string>();
+        while (await reader.ReadAsync(cancellationToken))
+            applied.Add(reader.GetString(0));
+        return applied;
+    }
+
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var connection = new SqliteConnection(_connectionString);

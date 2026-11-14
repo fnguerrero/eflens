@@ -8,12 +8,27 @@ namespace EfLens.Ef;
 /// <param name="EfCoreVersion">EF Core version the target app runs.</param>
 /// <param name="Entities">Entity types and the tables their properties map to.</param>
 /// <param name="Tables">The store side: tables EF Core expects, with keys, foreign keys and indexes.</param>
+/// <param name="Migrations">Migrations compiled into the app and where EF Core records the applied ones.</param>
 public sealed record EfModelInfo(
     string Context,
     string Provider,
     string EfCoreVersion,
     IReadOnlyList<EfEntityInfo> Entities,
-    IReadOnlyList<EfTableInfo> Tables);
+    IReadOnlyList<EfTableInfo> Tables,
+    EfMigrationsInfo Migrations);
+
+/// <param name="Defined">Migration ids in the assembly, oldest first (e.g. <c>20261114045550_InitialCreate</c>).</param>
+/// <param name="HasPendingModelChanges">
+/// True when the model changed after the last migration (what <c>dotnet ef migrations has-pending-model-changes</c>
+/// reports); null when EF Core could not tell.
+/// </param>
+/// <param name="HistorySchema">Schema of the history table, or null for the provider's default.</param>
+/// <param name="HistoryTable">Table where EF Core records applied migrations, usually <c>__EFMigrationsHistory</c>.</param>
+public sealed record EfMigrationsInfo(
+    IReadOnlyList<string> Defined,
+    bool? HasPendingModelChanges,
+    string? HistorySchema,
+    string HistoryTable);
 
 /// <summary>An entity type and where it is stored.</summary>
 public sealed record EfEntityInfo(string Entity, string ClrType, IReadOnlyList<EfTableMapping> Mappings);
