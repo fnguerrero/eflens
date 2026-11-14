@@ -50,7 +50,7 @@ jobs:
         id: nuget
         uses: NuGet/login@v1
         with:
-          user: ${{ vars.NUGET_USER || 'fnguerrero' }}
+          user: ${{ vars.NUGET_USER || 'nass.dev99' }}
 
       - name: Push to NuGet.org
         run: >
