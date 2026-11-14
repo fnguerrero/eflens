@@ -1,5 +1,7 @@
 # EfLens
 
+<!-- mcp-name: io.github.fnguerrero/eflens -->
+
 [![CI](https://github.com/fnguerrero/eflens/actions/workflows/ci.yml/badge.svg)](https://github.com/fnguerrero/eflens/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -42,43 +44,54 @@ the candidates, so the agent can retry on its own.
 
 ## Quick start
 
-Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
-
-```bash
-git clone https://github.com/fnguerrero/eflens.git
-cd eflens
-dotnet build
-```
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download). There is no install step: `dnx` downloads the
+[EfLens package](https://www.nuget.org/packages/EfLens) from NuGet.org and runs it. Configuration travels as
+environment variables, so the connection string never shows up in a command line.
 
 ### Claude Code
 
 ```bash
-claude mcp add eflens -- dotnet run --project src/EfLens -- --provider sqlite --connection "Data Source=/path/to/app.db"
+claude mcp add eflens -e EfLens__Provider=sqlite -e "EfLens__ConnectionString=Data Source=/path/to/app.db" -- dnx EfLens --yes
 ```
+
+On Windows, run `dnx` through the shell: `... -- cmd /c dnx EfLens --yes`.
 
 ### VS Code (`.vscode/mcp.json`)
 
 ```json
 {
+  "inputs": [
+    { "type": "promptString", "id": "eflens-connection", "description": "Connection string (read-only login)", "password": true }
+  ],
   "servers": {
     "eflens": {
       "type": "stdio",
-      "command": "dotnet",
-      "args": ["run", "--project", "src/EfLens", "--", "--provider", "sqlite", "--connection", "Data Source=app.db"]
+      "command": "dnx",
+      "args": ["EfLens", "--yes"],
+      "env": {
+        "EfLens__Provider": "sqlserver",
+        "EfLens__ConnectionString": "${input:eflens-connection}",
+        "EfLens__EfAssembly": "${workspaceFolder}/src/MyApp/bin/Debug/net10.0/MyApp.dll"
+      }
     }
   }
 }
 ```
 
+Pin a version with `EfLens@0.1.0`. To keep it installed instead: `dotnet tool install -g EfLens`, then use `eflens`
+as the command. To run from source: `dotnet run --project src/EfLens -- --provider sqlite --connection "Data Source=app.db"`.
+
 | Option | Flag | Default |
 |---|---|---|
+| Database engine: `sqlite`, `sqlserver` or `postgres` | `--provider` | `sqlite` |
+| Connection string (use a read-only login) | `--connection` | none |
 | Most rows `query` returns (the agent can ask for fewer, never more) | `--max-rows` | 200 |
 | Seconds before a query is cancelled in the engine | `--timeout` | 15 |
 | Compiled app with the `DbContext` (its `.dll` in `bin/...`), for `ef_model` and `ef_drift` | `--ef-assembly` | none |
 | `DbContext` to use when the app has more than one | `--ef-context` | none |
 
-Configuration can also come from environment variables: `EfLens__Provider`, `EfLens__ConnectionString`,
-`EfLens__MaxRows`, `EfLens__QueryTimeoutSeconds`, `EfLens__EfAssembly`, `EfLens__EfContext`.
+Every option has an environment variable too: `EfLens__Provider`, `EfLens__ConnectionString`, `EfLens__MaxRows`,
+`EfLens__QueryTimeoutSeconds`, `EfLens__EfAssembly`, `EfLens__EfContext`.
 
 ## How `ef_model` reads your model
 
@@ -232,7 +245,8 @@ xUnit v3 on Microsoft.Testing.Platform.
 - Drift: every rule unit tested on hand-built catalogs, and end to end on SQL Server, where Shop migrates its own
   databases (one in sync, one with a missing deploy and a hotfix by hand) and `ef_drift` must find each change.
 - End-to-end tests that start the real server and talk to it through the official MCP client over in-memory pipes.
-- CI runs on Ubuntu and Windows, with warnings as errors, TRX reports and code coverage.
+- CI runs on Ubuntu and Windows, with warnings as errors, TRX reports and code coverage, then packs the NuGet
+  package, installs it as a tool and smoke tests it over stdio ([`tests/smoke`](tests/smoke)).
 
 ## Roadmap
 
@@ -242,7 +256,14 @@ xUnit v3 on Microsoft.Testing.Platform.
 - [x] Load an EF Core `DbContext` (isolated load context, app's own EF Core) and map entities to tables
 - [x] Drift detection: pending migrations and model vs. schema differences
 - [x] PostgreSQL and execution plans (`explain`)
-- [ ] Ship as a .NET global tool on NuGet and list it in the MCP Registry
+- [ ] Ship as a .NET global tool on NuGet and list it in the MCP Registry (packaged and automated; first release pending)
+
+## Releasing
+
+Tagging `vX.Y.Z` runs [`release.yml`](.github/workflows/release.yml): tests, pack, smoke test, push to NuGet.org
+with [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing) and publish
+[`server.json`](src/EfLens/.mcp/server.json) to the [MCP Registry](https://registry.modelcontextprotocol.io) with
+GitHub OIDC. No API key is stored anywhere. `EfLens.csproj` and `server.json` must carry the tag's version.
 
 ## License
 

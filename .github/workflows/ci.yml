@@ -40,6 +40,26 @@ jobs:
       - name: Test
         run: dotnet test --no-build -c Release --report-trx --coverage --results-directory TestResults
 
+      - name: Check that the package and server.json agree on the version
+        run: python eng/version.py
+
+      # The package as users get it: install it like a tool and talk MCP to it over stdio.
+      - name: Pack
+        run: dotnet pack src/EfLens -c Release -o artifacts
+
+      - name: Smoke test the installed tool
+        run: |
+          dotnet tool install EfLens --tool-path tools --add-source artifacts --version "$(python eng/version.py)"
+          python tests/smoke/smoke.py tools/eflens
+        shell: bash
+
+      - name: Upload package
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v5
+        with:
+          name: package
+          path: artifacts/*.nupkg
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v5

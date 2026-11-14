@@ -7,6 +7,41 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    Shipped as a .NET tool (framework-dependent: it needs the same runtime as the apps it loads) and tagged as an
+    MCP server, so NuGet.org lists it as one and `dnx EfLens` runs it. Keep Version in sync with .mcp/server.json;
+    the release workflow refuses a tag that does not match both.
+  -->
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>eflens</ToolCommandName>
+    <PackageType>McpServer</PackageType>
+    <PackageId>EfLens</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>fnguerrero</Authors>
+    <Description>Read-only MCP server that lets AI agents inspect SQLite, SQL Server and PostgreSQL databases safely, read your EF Core model and detect model/schema drift.</Description>
+    <PackageTags>mcp;mcp-server;model-context-protocol;efcore;entity-framework-core;database;sql-server;postgresql;sqlite;ai</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/fnguerrero/eflens</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/fnguerrero/eflens</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+    <None Include=".mcp/server.json" Pack="true" PackagePath="/.mcp/" />
+  </ItemGroup>
+
+  <!-- The probe ships inside tools/ with the rest of the publish output, never as contentFiles for consumers. -->
+  <Target Name="KeepProbeOutOfContentFiles" BeforeTargets="_GetPackageFiles">
+    <ItemGroup>
+      <_EfLensProbe Include="@(Content)" Condition="'%(Filename)%(Extension)' == 'EfLens.ModelProbe.dll'" />
+      <Content Remove="@(_EfLensProbe)" />
+      <Content Include="@(_EfLensProbe)" Pack="false" />
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <InternalsVisibleTo Include="EfLens.Tests" />
   </ItemGroup>

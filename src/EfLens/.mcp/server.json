@@ -1,0 +1,48 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.fnguerrero/eflens",
+  "title": "EfLens",
+  "description": "Read-only database MCP server for .NET: safe SQL, query plans, EF Core model and drift detection.",
+  "version": "0.1.0",
+  "websiteUrl": "https://github.com/fnguerrero/eflens",
+  "repository": {
+    "url": "https://github.com/fnguerrero/eflens",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "nuget",
+      "identifier": "EfLens",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "EfLens__Provider",
+          "description": "Database engine: sqlite, sqlserver or postgres.",
+          "isRequired": true,
+          "choices": ["sqlite", "sqlserver", "postgres"]
+        },
+        {
+          "name": "EfLens__ConnectionString",
+          "description": "Connection string of the database to inspect. Use a read-only login.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "EfLens__EfAssembly",
+          "description": "Path to the compiled app (.dll) that contains the DbContext, for ef_model and ef_drift.",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
+          "name": "EfLens__MaxRows",
+          "description": "Most rows a query returns (default 200).",
+          "isRequired": false,
+          "format": "number"
+        }
+      ]
+    }
+  ]
+}

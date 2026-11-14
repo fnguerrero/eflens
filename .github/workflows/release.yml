@@ -1,0 +1,92 @@
+name: Release
+
+# Pushing a tag like v0.1.0 publishes that version to NuGet.org and to the MCP Registry.
+# No secrets are stored anywhere: both logins use the short-lived OIDC token GitHub issues to this workflow.
+#   - NuGet.org: a Trusted Publishing policy for fnguerrero/eflens, workflow file release.yml.
+#   - MCP Registry: `mcp-publisher login github-oidc` proves the repo owner, so io.github.fnguerrero/* is ours.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for NuGet Trusted Publishing and the MCP Registry
+    env:
+      EFLENS_REQUIRE_DOCKER: "1"
+      MCP_PUBLISHER_VERSION: v1.8.7
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Check the tag against the package and server.json versions
+        id: version
+        run: echo "version=$(python eng/version.py "$GITHUB_REF_NAME")" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: |
+          dotnet build -c Release -warnaserror
+          dotnet test --no-build -c Release
+
+      - name: Pack
+        run: dotnet pack src/EfLens -c Release -o artifacts
+
+      - name: Smoke test the installed tool
+        run: |
+          dotnet tool install EfLens --tool-path tools --add-source artifacts --version "${{ steps.version.outputs.version }}"
+          python tests/smoke/smoke.py tools/eflens
+
+      - name: NuGet login (OIDC, temporary API key)
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER || 'fnguerrero' }}
+
+      - name: Push to NuGet.org
+        run: >
+          dotnet nuget push "artifacts/EfLens.${{ steps.version.outputs.version }}.nupkg"
+          --api-key "${{ steps.nuget.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+
+      # The registry checks the mcp-name line in the package README, so the package must be live first.
+      - name: Wait until NuGet.org serves the package
+        run: |
+          url="https://api.nuget.org/v3-flatcontainer/eflens/${{ steps.version.outputs.version }}/readme"
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail --output /dev/null "$url"; then echo "Available."; exit 0; fi
+            echo "Not yet ($attempt/60)..."; sleep 30
+          done
+          echo "NuGet.org did not publish the package in 30 minutes." >&2; exit 1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Publish to the MCP Registry
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish src/EfLens/.mcp/server.json
