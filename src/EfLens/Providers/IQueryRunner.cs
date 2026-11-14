@@ -23,7 +23,33 @@ public interface IQueryRunner
     /// <exception cref="QueryFailedException">The engine refused it (unknown column, syntax error...).</exception>
     /// <exception cref="QueryTimeoutException">It ran past <see cref="QueryLimits.Timeout"/>.</exception>
     Task<QueryResult> QueryAsync(string sql, QueryLimits limits, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The estimated plan of the same kind of SQL <see cref="QueryAsync"/> accepts, without running it
+    /// (SHOWPLAN on SQL Server, EXPLAIN without ANALYZE on PostgreSQL, EXPLAIN QUERY PLAN on SQLite).
+    /// </summary>
+    /// <exception cref="QueryRejectedException">The SQL is not a single read-only SELECT.</exception>
+    /// <exception cref="QueryFailedException">The engine refused it.</exception>
+    /// <exception cref="QueryTimeoutException">Planning ran past <see cref="QueryLimits.Timeout"/>.</exception>
+    Task<QueryPlan> ExplainAsync(string sql, QueryLimits limits, CancellationToken cancellationToken = default);
 }
+
+/// <summary>An estimated execution plan, as a tree that reads the same on every engine.</summary>
+/// <param name="EstimatedCost">Engine-specific cost of the whole statement (null on SQLite, which has none).</param>
+/// <param name="Plan">Root operations; a statement usually has one.</param>
+/// <param name="Notes">What deserves attention: missing indexes, warnings, filtered full scans.</param>
+public sealed record QueryPlan(double? EstimatedCost, IReadOnlyList<PlanNode> Plan, IReadOnlyList<string> Notes);
+
+/// <param name="Operation">What the engine does, e.g. <c>Index Seek</c>, <c>Hash Join</c>, <c>SCAN Orders</c>.</param>
+/// <param name="Object">Table and index it works on, when there is one (<c>sales.Orders (IX_Orders_CustomerId)</c>).</param>
+/// <param name="EstimatedRows">Rows the optimizer expects this step to return.</param>
+/// <param name="EstimatedCost">Cost of this step including its children.</param>
+public sealed record PlanNode(
+    string Operation,
+    string? Object,
+    double? EstimatedRows,
+    double? EstimatedCost,
+    IReadOnlyList<PlanNode> Children);
 
 /// <summary>Reads the migrations EF Core recorded as applied.</summary>
 public interface IMigrationHistory

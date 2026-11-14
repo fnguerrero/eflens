@@ -14,8 +14,9 @@ public static class EfLensServiceCollectionExtensions
         {
             "sqlite" => new SqliteSchemaProvider(options.ConnectionString),
             "sqlserver" or "mssql" => new SqlServerSchemaProvider(options.ConnectionString),
+            "postgres" or "postgresql" or "npgsql" => new PostgresSchemaProvider(options.ConnectionString),
             var other => throw new NotSupportedException(
-                $"Provider '{other}' is not supported yet. Supported providers: sqlite, sqlserver."),
+                $"Provider '{other}' is not supported yet. Supported providers: sqlite, sqlserver, postgres."),
         };
 
         services.AddSingleton(options);

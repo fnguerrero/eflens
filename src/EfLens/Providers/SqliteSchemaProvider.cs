@@ -31,10 +31,40 @@ public sealed class SqliteSchemaProvider : IDatabaseProvider
     /// </summary>
     public async Task<QueryResult> QueryAsync(string sql, QueryLimits limits, CancellationToken cancellationToken = default)
     {
+        var stopwatch = Stopwatch.StartNew();
+        return await RunGuardedAsync(sql, sql, limits, async (reader, token) =>
+        {
+            var (columns, rows, truncated) = await QueryRows.ReadAsync(reader, limits, token);
+            return new QueryResult(columns, rows, truncated, stopwatch.ElapsedMilliseconds);
+        }, cancellationToken);
+    }
+
+    /// <summary>EXPLAIN QUERY PLAN, after the statement itself passed every guard <see cref="QueryAsync"/> applies.</summary>
+    public Task<QueryPlan> ExplainAsync(string sql, QueryLimits limits, CancellationToken cancellationToken = default) =>
+        RunGuardedAsync(sql, $"EXPLAIN QUERY PLAN {sql}", limits, async (reader, token) =>
+        {
+            // Rows are (id, parent, notused, detail); parent 0 is the root.
+            var rows = new List<(long Id, long Parent, string Detail)>();
+            while (await reader.ReadAsync(token))
+                rows.Add((reader.GetInt64(0), reader.GetInt64(1), reader.GetString(3)));
+
+            List<PlanNode> ChildrenOf(long parent) =>
+                [.. rows.Where(r => r.Parent == parent).Select(r => new PlanNode(r.Detail, null, null, null, ChildrenOf(r.Id)))];
+
+            var notes = rows
+                .Where(r => r.Detail.StartsWith("SCAN ", StringComparison.Ordinal) && !r.Detail.Contains("COVERING INDEX", StringComparison.Ordinal))
+                .Select(r => $"{r.Detail}: a full scan; if the query filters or joins on this table, an index on those columns may help.")
+                .ToList();
+            return new QueryPlan(null, ChildrenOf(0), notes);
+        }, cancellationToken);
+
+    private async Task<T> RunGuardedAsync<T>(
+        string sql, string commandText, QueryLimits limits,
+        Func<SqliteDataReader, CancellationToken, Task<T>> read, CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(sql))
             throw new QueryRejectedException("the query is empty.");
 
-        var stopwatch = Stopwatch.StartNew();
         await using var connection = new SqliteConnection(_queryConnectionString);
         await connection.OpenAsync(cancellationToken);
         var db = connection.Handle!;
@@ -58,10 +88,9 @@ public sealed class SqliteSchemaProvider : IDatabaseProvider
         try
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = sql;
+            command.CommandText = commandText;
             await using var reader = await command.ExecuteReaderAsync(timeout.Token);
-            var (columns, rows, truncated) = await QueryRows.ReadAsync(reader, limits, timeout.Token);
-            return new QueryResult(columns, rows, truncated, stopwatch.ElapsedMilliseconds);
+            return await read(reader, timeout.Token);
         }
         catch (Exception ex) when (ex is OperationCanceledException or SqliteException { SqliteErrorCode: raw.SQLITE_INTERRUPT }
                                    && !cancellationToken.IsCancellationRequested)

@@ -229,19 +229,27 @@ public static class DriftDetector
     }
 
     /// <summary>
-    /// Compares table names ignoring case. A missing schema matches the usual default schemas (dbo, main), so
+    /// Compares table names ignoring case. A missing schema matches the usual default schemas (dbo, public, main), so
     /// EF Core's "default schema" (null) lines up with what the database reports.
     /// </summary>
     internal static bool SameTable(string? schemaA, string nameA, string? schemaB, string nameB) =>
         Names.Equals(nameA, nameB) && Names.Equals(DefaultSchema(schemaA), DefaultSchema(schemaB));
 
     private static string DefaultSchema(string? schema) =>
-        schema is null || Names.Equals(schema, "dbo") || Names.Equals(schema, "main") ? "" : schema;
+        schema is null || Names.Equals(schema, "dbo") || Names.Equals(schema, "public") || Names.Equals(schema, "main") ? "" : schema;
 
-    /// <summary>Puts EF Core store types and catalog types in the same spelling (datetime2 = datetime2(7), ...).</summary>
+    /// <summary>
+    /// Puts EF Core store types and catalog types in the same spelling: datetime2 = datetime2(7) on SQL Server,
+    /// varchar = character varying and timestamp = timestamp without time zone on PostgreSQL, and so on.
+    /// </summary>
     internal static string NormalizeType(string type)
     {
-        var t = type.Replace(" ", "", StringComparison.Ordinal).ToLowerInvariant();
+        var t = System.Text.RegularExpressions.Regex.Replace(type.Trim().ToLowerInvariant(), @"\s+", " ")
+            .Replace("character varying", "varchar", StringComparison.Ordinal)
+            .Replace(" without time zone", "", StringComparison.Ordinal)
+            .Replace("timestamptz", "timestamp with time zone", StringComparison.Ordinal)
+            .Replace("double precision", "float", StringComparison.Ordinal);
+        t = System.Text.RegularExpressions.Regex.Replace(t, @"\s*([(),])\s*", "$1");
         return t switch
         {
             "datetime2" or "datetimeoffset" or "time" => $"{t}(7)",
@@ -250,6 +258,12 @@ public static class DriftDetector
             "float(24)" => "real",
             "decimal" or "numeric" => "decimal(18,0)",
             _ when t.StartsWith("numeric(", StringComparison.Ordinal) => $"decimal{t["numeric".Length..]}",
+            "integer" or "int4" => "int",
+            "int8" => "bigint",
+            "int2" => "smallint",
+            "bool" => "boolean",
+            "float8" => "float",
+            "float4" => "real",
             _ => t,
         };
     }

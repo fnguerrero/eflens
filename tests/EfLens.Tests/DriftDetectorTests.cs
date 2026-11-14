@@ -172,7 +172,11 @@ public sealed class DriftDetectorTests
     [InlineData("numeric(10, 2)", "decimal(10,2)")]
     [InlineData("decimal", "decimal(18,0)")]
     [InlineData("nvarchar(max)", "nvarchar(max)")]
-    [InlineData("INTEGER", "integer")]
+    [InlineData("INTEGER", "int")]
+    [InlineData("character varying(100)", "varchar(100)")]
+    [InlineData("timestamp(3) without time zone", "timestamp(3)")]
+    [InlineData("timestamptz", "timestamp with time zone")]
+    [InlineData("double precision", "float")]
     public void Store_types_are_compared_in_one_spelling(string type, string normalized) =>
         Assert.Equal(normalized, DriftDetector.NormalizeType(type));
 }

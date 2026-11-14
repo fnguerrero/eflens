@@ -4,7 +4,7 @@ using ModelContextProtocol.Server;
 
 namespace EfLens.Tools;
 
-/// <summary>The one tool that runs SQL written by the agent.</summary>
+/// <summary>The tools that take SQL written by the agent.</summary>
 [McpServerToolType]
 public sealed class QueryTools(IQueryRunner runner, EfLensOptions options)
 {
@@ -32,5 +32,22 @@ public sealed class QueryTools(IQueryRunner runner, EfLensOptions options)
             Timeout: TimeSpan.FromSeconds(Math.Max(1, options.QueryTimeoutSeconds)));
 
         return ToolErrors.Expose(() => runner.QueryAsync(sql, limits, cancellationToken));
+    }
+
+    [McpServerTool(Name = "explain", Title = "Show the execution plan",
+        ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("""
+        Shows the estimated execution plan of ONE read-only SELECT without running it: a tree of operations
+        (scans, seeks, joins, sorts) with the table and index each one uses, estimated rows and cost, plus notes
+        worth acting on (missing indexes suggested by SQL Server, warnings, filtered full scans).
+        The same rules as query apply: anything that is not a single read-only SELECT is rejected.
+        """)]
+    public Task<QueryPlan> Explain(
+        [Description("A single SELECT statement in the database's own SQL dialect.")]
+        string sql,
+        CancellationToken cancellationToken = default)
+    {
+        var limits = new QueryLimits(MaxRows: 1, Timeout: TimeSpan.FromSeconds(Math.Max(1, options.QueryTimeoutSeconds)));
+        return ToolErrors.Expose(() => runner.ExplainAsync(sql, limits, cancellationToken));
     }
 }

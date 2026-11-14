@@ -52,7 +52,7 @@ public sealed class McpEndToEndTests : IAsyncLifetime
     {
         var tools = await _client.ListToolsAsync(cancellationToken: Ct);
 
-        Assert.Equal(["describe_table", "ef_drift", "ef_model", "list_relations", "list_tables", "query"], tools.Select(t => t.Name).Order());
+        Assert.Equal(["describe_table", "ef_drift", "ef_model", "explain", "list_relations", "list_tables", "query"], tools.Select(t => t.Name).Order());
         Assert.All(tools, tool =>
         {
             Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint);
@@ -115,6 +115,15 @@ public sealed class McpEndToEndTests : IAsyncLifetime
         Assert.Equal(["name"], result.GetProperty("columns").EnumerateArray().Select(c => c.GetString()!));
         Assert.Equal(2, result.GetProperty("rows").GetArrayLength());
         Assert.True(result.GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Calling_explain_returns_the_plan_tree()
+    {
+        var plan = await CallAsync("explain", new() { ["sql"] = "SELECT Total FROM Orders WHERE CustomerId = 1" });
+
+        var root = Assert.Single(plan.GetProperty("plan").EnumerateArray());
+        Assert.Contains("IX_Orders_CustomerId", root.GetProperty("operation").GetString());
     }
 
     [Fact]

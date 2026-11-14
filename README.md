@@ -10,8 +10,9 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io) server, wr
 Most MCP servers are written in Python or TypeScript, and the .NET ones focus on navigating source code with Roslyn.
 EfLens covers the other half of a .NET app: the database, and whether it still matches the EF Core model.
 
-> **Status:** early development. Schema tools and safe queries work on SQLite and SQL Server; `ef_model` reads the
-> EF Core model of a compiled app and `ef_drift` tells whether the database still matches it. See the [roadmap](#roadmap).
+> **Status:** early development. Schema tools, safe queries and execution plans work on SQLite, SQL Server and
+> PostgreSQL; `ef_model` reads the EF Core model of a compiled app and `ef_drift` tells whether the database still
+> matches it. See the [roadmap](#roadmap).
 
 ## Tools
 
@@ -21,6 +22,7 @@ EfLens covers the other half of a .NET app: the database, and whether it still m
 | `describe_table` | Columns (declared type, nullability, default, primary key position) and indexes of a table or view |
 | `list_relations` | Foreign keys with their columns and `ON DELETE` action; pass a table to get the ones in and out of it |
 | `query` | Runs **one read-only SELECT** and returns `columns`, `rows` (as arrays) and `truncated`; anything else is rejected with the reason |
+| `explain` | The estimated plan of that SELECT **without running it**: a tree of operations with table, index, rows and cost, plus notes (missing indexes, warnings, filtered full scans) |
 | `ef_model` | Reads the EF Core model of your compiled app: entity → table → column mappings, and the tables EF Core expects (store types, nullability, defaults, keys, foreign keys, indexes) |
 | `ef_drift` | Compares that model with the real database: pending migrations, applied migrations the build does not have, model changes with no migration, and every schema difference |
 
@@ -28,10 +30,15 @@ Every tool is annotated `readOnlyHint: true`, `destructiveHint: false`. Names ca
 schema-qualified (`sales.Orders`) or bracketed (`[sales].[Orders]`); an ambiguous name returns an error that lists
 the candidates, so the agent can retry on its own.
 
-| Provider | `--provider` | Example connection |
-|---|---|---|
-| SQLite | `sqlite` | `Data Source=app.db` |
-| SQL Server | `sqlserver` (or `mssql`) | `Server=localhost;Database=Shop;User Id=eflens_reader;Password=...;TrustServerCertificate=True` |
+| | SQLite | SQL Server | PostgreSQL |
+|---|---|---|---|
+| `--provider` | `sqlite` | `sqlserver` (or `mssql`) | `postgres` (or `postgresql`) |
+| Example connection | `Data Source=app.db` | `Server=localhost;Database=Shop;User Id=eflens_reader;Password=...;TrustServerCertificate=True` | `Host=localhost;Database=shop;Username=eflens_reader;Password=...` |
+| Schema tools | ✓ | ✓ | ✓ |
+| `query` guard | Engine authorizer | ScriptDom parser + rolled-back transaction | Server-side single statement, plan check, `READ ONLY` transaction, cursor |
+| `explain` | `EXPLAIN QUERY PLAN` | `SHOWPLAN_XML` (with missing index suggestions) | `EXPLAIN (FORMAT JSON)` |
+| `ef_drift` history | `__EFMigrationsHistory` | `__EFMigrationsHistory` (any schema) | `__EFMigrationsHistory` (any schema) |
+| Tested against | Throwaway files | SQL Server 2022 in a container | PostgreSQL 17 in a container |
 
 ## Quick start
 
@@ -174,6 +181,25 @@ Every guard is enforced by the database engine or a real parser, never by keywor
    the timeout cancels the command on the server.
 4. **Least privilege.** The one layer EfLens cannot provide: connect with a login that only has `db_datareader`.
 
+### `query` on PostgreSQL
+
+1. **One statement, checked by the server.** Npgsql runs in raw mode, so it never splits the text on the client;
+   PostgreSQL's extended protocol refuses `SELECT 1; COMMIT; DELETE ...` as a whole.
+2. **Planned before it runs.** PostgreSQL must be able to `EXPLAIN` it (so `SET`, `COMMIT`, `DO`, `CALL`, `COPY`
+   are refused), and a plan that writes (`ModifyTable`, including data-modifying CTEs) or locks rows is rejected.
+3. **Read-only transaction, always rolled back.** The session starts with `default_transaction_read_only` and the
+   query runs in `START TRANSACTION READ ONLY`: the engine refuses writes anywhere, even inside functions or
+   `nextval()`.
+4. **Through a cursor.** Rows are read with `DECLARE ... CURSOR` and `FETCH`, which only accept a query and make the
+   server stop at the row cap instead of computing the rest; `statement_timeout` cancels it in the server.
+5. **Least privilege.** Functions run with your login's rights (`dblink`, `pg_read_file`...): connect with a role
+   that only has `pg_read_all_data`, or `SELECT` on what the agent may see.
+
+### `explain`
+
+It goes through the same guards as `query` and never executes the statement: `SHOWPLAN_XML` makes SQL Server
+compile instead of run, PostgreSQL's `EXPLAIN` has no `ANALYZE`, and SQLite's `EXPLAIN QUERY PLAN` only plans.
+
 ### Everywhere
 
 - **Schema tools only read catalog views.** Names are bound as parameters and resolved with
@@ -196,8 +222,11 @@ xUnit v3 on Microsoft.Testing.Platform.
 - Provider tests against throwaway SQLite files.
 - An attack table for the T-SQL validator (writes hidden in CTEs, comments and literals, `GO` batches, linked
   servers, `OPENROWSET(BULK ...)`, locking hints) and for the SQLite authorizer (`PRAGMA`, `ATTACH`, transactions).
-- SQL Server tests against a real server started with [Testcontainers](https://dotnet.testcontainers.org/).
+- SQL Server and PostgreSQL tests against real servers started with [Testcontainers](https://dotnet.testcontainers.org/).
   Without Docker they are skipped locally; in CI (Ubuntu) Docker is required, so they can never be silently skipped.
+- An attack table for PostgreSQL too: writes in CTEs, statements chained after `COMMIT`, `FOR UPDATE`, `nextval()`,
+  `CREATE TABLE AS`, `DO`, `COPY`, `SET ROLE`; after each one the data is checked untouched.
+- Execution plans on the three engines, including a missing index that SQL Server suggests on a 50,000-row table.
 - EF Core tests that load `samples/Shop` from its build output, like any user app: store types, migration-style
   key names, migrations, context selection, wrong assemblies, and a check that the DLL is never locked.
 - Drift: every rule unit tested on hand-built catalogs, and end to end on SQL Server, where Shop migrates its own
@@ -212,7 +241,7 @@ xUnit v3 on Microsoft.Testing.Platform.
 - [x] Safe `query`: engine authorizer (SQLite), ScriptDom validation and rolled-back transaction (SQL Server), row and time limits
 - [x] Load an EF Core `DbContext` (isolated load context, app's own EF Core) and map entities to tables
 - [x] Drift detection: pending migrations and model vs. schema differences
-- [ ] PostgreSQL and execution plans (`explain`)
+- [x] PostgreSQL and execution plans (`explain`)
 - [ ] Ship as a .NET global tool on NuGet and list it in the MCP Registry
 
 ## License

@@ -69,6 +69,35 @@ public sealed class SqlServerSchemaProvider : IDatabaseProvider
         }
     }
 
+    /// <summary>
+    /// The estimated plan from <c>SET SHOWPLAN_XML ON</c>: SQL Server compiles the statement and returns the plan
+    /// instead of running it. The statement must still pass the same validator as <see cref="QueryAsync"/>.
+    /// </summary>
+    public async Task<QueryPlan> ExplainAsync(string sql, QueryLimits limits, CancellationToken cancellationToken = default)
+    {
+        SqlServerQueryValidator.Validate(sql);
+
+        await using var connection = await OpenAsync(cancellationToken);
+        var timeoutSeconds = (int)Math.Ceiling(limits.Timeout.TotalSeconds);
+        try
+        {
+            // SHOWPLAN must be alone in its batch, so it is switched on and off around the statement.
+            await new SqlCommand("SET SHOWPLAN_XML ON", connection).ExecuteNonQueryAsync(cancellationToken);
+            await using var command = new SqlCommand(sql, connection) { CommandTimeout = timeoutSeconds };
+            var xml = (string?)await command.ExecuteScalarAsync(cancellationToken)
+                ?? throw new QueryFailedException("SQL Server returned no plan.");
+            return ShowPlan.Parse(xml);
+        }
+        catch (SqlException ex) when (ex.Number == -2 && !cancellationToken.IsCancellationRequested)
+        {
+            throw new QueryTimeoutException(limits.Timeout);
+        }
+        catch (SqlException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new QueryFailedException(ex.Message);
+        }
+    }
+
     private readonly string _connectionString;
 
     public SqlServerSchemaProvider(string connectionString)
